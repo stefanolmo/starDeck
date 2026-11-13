@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stardeck"
+version = "0.1.0"
+description = "Virtual planetarium: stars, constellations, planets, Sun and Moon for any time and place"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["PySide6-Essentials>=6.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+stardeck = "stardeck.__main__:main"
+
+[tool.setuptools]
+packages = ["stardeck"]
+
+[tool.setuptools.package-data]
+stardeck = ["stardeck.svg", "data/sky.json.gz"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

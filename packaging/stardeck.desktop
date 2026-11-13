@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=StarDeck
+GenericName=Virtual planetarium
+GenericName[it]=Planetario virtuale
+Comment=Stars, constellations, planets, Sun and Moon for any time and place
+Comment[it]=Stelle, costellazioni, pianeti, Sole e Luna per qualsiasi data e luogo
+Exec=@EXEC@
+Icon=@ICON@
+Terminal=false
+Categories=Education;Science;Astronomy;
+StartupWMClass=stardeck
