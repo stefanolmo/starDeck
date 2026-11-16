@@ -7,10 +7,10 @@ from typing import Optional
 
 from PySide6.QtCore import QDateTime, QElapsedTimer, QSettings, QStringListModel, Qt, QTimer, QTimeZone
 from PySide6.QtGui import QAction, QKeySequence, QTextDocument
-from PySide6.QtWidgets import (QCheckBox, QCompleter, QDateTimeEdit, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
+from PySide6.QtWidgets import (QCheckBox, QCompleter, QDateTimeEdit, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
                                QPushButton, QScrollArea, QSizePolicy, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
-from . import astro, theme
+from . import astro, events, theme
 from .catalog import Catalog, GREEK
 from .config import APP, ORG, Config
 from .places import Place, db as places_db, format_custom, parse_custom, preset_places, tzinfo, valid_tz
@@ -21,6 +21,7 @@ from .widgets import Card
 APP_NAME = "StarDeck"
 # time-flow ladder in simulated seconds per real second
 RATES = [-86400, -3600, -60, 0, 1, 60, 3600, 86400]
+EVENT_BODIES = ["Sole", "Luna"] + astro.PLANETS
 LAYERS = [("show_constellation_lines", "Linee delle costellazioni", "C"), ("show_constellation_names", "Nomi delle costellazioni", "V"),
           ("show_star_names", "Nomi delle stelle", "S"), ("show_planets", "Pianeti", "P"), ("show_dso", "Oggetti del profondo cielo", "D"),
           ("show_milky_way", "Via Lattea", "M"), ("show_ecliptic", "Eclittica", "L"), ("show_grid_altaz", "Griglia altazimutale", "A"),
@@ -187,12 +188,36 @@ class MainWindow(QMainWindow):
         self.btn_center.setEnabled(False); self.btn_follow.setEnabled(False)
         sl.addWidget(self.info_card)
         self.sky_card = Card("Cielo adesso")
-        self.sky_info = QLabel()
-        self.sky_info.setObjectName("kv")
-        self.sky_info.setTextFormat(Qt.RichText)
-        self.sky_info.setWordWrap(True)
-        self.sky_card.body.addWidget(self.sky_info)
+        self.sky_sun = QLabel()
+        self.sky_moon = QLabel()
+        for lab in (self.sky_sun, self.sky_moon):
+            lab.setObjectName("kv")
+            lab.setTextFormat(Qt.PlainText)
+            self.sky_card.body.addWidget(lab)
         sl.addWidget(self.sky_card)
+        self.ev_card = Card("Sorge e tramonta")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(5)
+        self.ev_grid = grid
+        for c, h in enumerate(("", "Sorge", "Culmine", "Tramonta")):
+            lab = QLabel(h)
+            lab.setObjectName("muted")
+            grid.addWidget(lab, 0, c)
+        self.ev_cells: dict[str, list] = {}
+        for r, name in enumerate(EVENT_BODIES, start=1):
+            row = [QLabel(name)] + [QLabel("—") for _ in range(3)]
+            for c, lab in enumerate(row):
+                lab.setObjectName("kv")
+                lab.setTextFormat(Qt.PlainText)
+                grid.addWidget(lab, r, c)
+            self.ev_cells[name] = row
+        self.ev_card.body.addLayout(grid)
+        self.night_label = QLabel()
+        self.night_label.setObjectName("muted")
+        self.night_label.setTextFormat(Qt.PlainText)
+        self.ev_card.body.addWidget(self.night_label)
+        sl.addWidget(self.ev_card)
         layers = Card("Visualizza")
         self.layer_boxes = {}
         for key, text, sc in LAYERS:
@@ -317,8 +342,8 @@ class MainWindow(QMainWindow):
             self.cfg.save(self.qs)
         self.view.set_config(self.cfg)
         self._update_place_label()
-        self._sky_txt = None
         self._update_time_widgets(force=True)
+        self._update_events(force=True)
         self.status.setText(f"Luogo: {name}  ·  fuso {self.cfg.tz}")
 
     # ------------------------------------------------------------------ time
@@ -475,6 +500,16 @@ class MainWindow(QMainWindow):
                      ("Elongazione", f"{ob.elong:.0f}°")]
         rows += [("Asc. retta", astro.fmt_ra(ra)), ("Declinazione", astro.fmt_dec(dec)),
                  ("Altezza", f"{alt:+.1f}°" + ("" if alt > 0 else "  (sotto l'orizzonte)")), ("Azimut", f"{az:.1f}°  {self._compass(az)}")]
+        ev = self._selection_events(o)
+        tz = self._tz()
+        if ev.state == "always_up":
+            rows.append(("Visibilità", "sempre sopra l'orizzonte"))
+        elif ev.state == "never_up":
+            rows.append(("Visibilità", "non sorge oggi"))
+        else:
+            rows += [("Sorge", events.fmt_time(ev.rise, tz)), ("Culmine", events.fmt_time(ev.transit, tz) +
+                     (f"  ({ev.transit_alt:.0f}°)" if ev.transit_alt is not None and ev.transit_alt > events.H0_STAR else "")),
+                     ("Tramonta", events.fmt_time(ev.set, tz))]
         tbl = "".join(f"<tr><td style='color:{theme.MUTED};padding-right:10px'>{k}</td><td>{v}</td></tr>" for k, v in rows)
         return (f"<div style='font-size:16px;font-weight:800;color:#f1f5f9'>{title}</div>"
                 f"<div style='color:{theme.ACCENT};margin-bottom:6px'>{sub}</div><table>{tbl}</table>")
@@ -488,12 +523,59 @@ class MainWindow(QMainWindow):
         if not v.bodies:
             v._update_bodies()
         moon = v.bodies["Luna"]
-        txt = (f"<div>Sole: altezza <b>{v.sun_alt:+.1f}°</b> · {astro.twilight_state(v.sun_alt)}</div>"
-               f"<div>Luna: {astro.moon_phase_name(moon.phase, v.moon_waxing)} ({moon.phase * 100:.0f}%)</div>")
-        if txt != getattr(self, "_sky_txt", None):
-            self._sky_txt = txt
-            self.sky_info.setText(txt)
-            self._fit_label(self.sky_info)
+        self.sky_sun.setText(f"Sole: {v.sun_alt:+.1f}° · {astro.twilight_state(v.sun_alt)}")
+        self.sky_moon.setText(f"Luna: {astro.moon_phase_name(moon.phase, v.moon_waxing)} {moon.phase * 100:.0f}%")
+        self._update_events()
+
+    # ------------------------------------------------------------------ rise / transit / set
+    def _event_args(self) -> tuple:
+        return self.cfg.lat, self.cfg.lon, self._tz()
+
+    def _update_events(self, force: bool = False) -> None:
+        """Recomputes the rise/transit/set table when the local day, the place or the time zone changes (not every tick)."""
+        key = (self._local_dt().date(), self.cfg.lat, self.cfg.lon, self.cfg.tz)
+        if key == getattr(self, "_ev_key", None) and not force:
+            return
+        self._ev_key = key
+        lat, lon, tz = self._event_args()
+        jd = self.view.jd
+        self.ev_card.title_label.setText(f"SORGE E TRAMONTA · {key[0]:%d/%m}")
+        for name in EVENT_BODIES:
+            ev = events.body_events(name, jd, lat, lon, tz)
+            cells = self.ev_cells[name]
+            self.ev_grid.removeWidget(cells[1])
+            self.ev_grid.removeWidget(cells[2])
+            self.ev_grid.removeWidget(cells[3])
+            row = EVENT_BODIES.index(name) + 1
+            if ev.state != "normal":
+                cells[1].setText("sempre sopra l'orizzonte" if ev.state == "always_up" else "non sorge")
+                self.ev_grid.addWidget(cells[1], row, 1, 1, 3)
+                cells[2].hide(); cells[3].hide(); cells[1].show()
+            else:
+                self.ev_grid.addWidget(cells[1], row, 1); self.ev_grid.addWidget(cells[2], row, 2); self.ev_grid.addWidget(cells[3], row, 3)
+                up = ev.transit_alt is not None and ev.transit_alt > events.H0_STAR
+                cells[1].setText(events.fmt_time(ev.rise, tz))
+                cells[2].setText(events.fmt_time(ev.transit, tz) if up else "—")
+                cells[3].setText(events.fmt_time(ev.set, tz))
+                for c in cells[1:]:
+                    c.show()
+                cells[2].setToolTip(f"altezza massima {ev.transit_alt:.0f}°" if up else "")
+        n = events.night_span(jd, lat, lon, tz)
+        if n.state == "always_up":
+            self.night_label.setText("Nessuna notte astronomica")
+        elif n.state == "never_up":
+            self.night_label.setText("Notte astronomica tutto il giorno")
+        else:
+            self.night_label.setText(f"Notte astronomica: dalle {events.fmt_time(n.set, tz)} alle {events.fmt_time(n.rise, tz)}")
+        if self.view.selection is not None:
+            self.info.setText(self._describe(self.view.selection))
+            self._fit_label(self.info)
+
+    def _selection_events(self, o: Picked):
+        lat, lon, tz = self._event_args()
+        if o.kind in ("sun", "moon", "planet"):
+            return events.body_events(o.obj.name, self.view.jd, lat, lon, tz)
+        return events.fixed_events(o.vec, self.view.jd, lat, lon, tz)
 
     def _do_search(self) -> None:
         text = self.search.text().strip()
@@ -540,7 +622,6 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, ev) -> None:
         super().showEvent(ev)
-        self._sky_txt = None                      # re-fit the labels once the style sheet has been applied
         self._fit_label(self.info)
         self._update_sky_card()
 

@@ -185,32 +185,33 @@ def sun_geocentric(jd: float) -> tuple:
     return (-ex, -ey, -ez)
 
 
+def planet_body(name: str, jd: float, earth=None) -> Body:
+    earth = earth or helio_ecliptic("Terra", jd)
+    p = helio_ecliptic(name, jd)
+    g = (p[0] - earth[0], p[1] - earth[1], p[2] - earth[2])
+    delta = math.sqrt(sum(c * c for c in g))
+    r = math.sqrt(sum(c * c for c in p))
+    r_e = math.sqrt(sum(c * c for c in earth))
+    cos_i = max(-1.0, min(1.0, (r * r + delta * delta - r_e * r_e) / (2 * r * delta)))
+    i = math.acos(cos_i) * R2D
+    sun_g = (-earth[0], -earth[1], -earth[2])
+    cos_el = max(-1.0, min(1.0, (g[0] * sun_g[0] + g[1] * sun_g[1] + g[2] * sun_g[2]) / (delta * r_e)))
+    mag = H0[name] + 5.0 * math.log10(r * delta)
+    if name == "Mercurio":
+        mag += 0.0380 * i - 0.000273 * i * i + 2e-6 * i ** 3
+    elif name == "Venere":
+        mag += 0.0009 * i + 0.000239 * i * i - 6.5e-7 * i ** 3
+    elif name == "Marte":
+        mag += 0.016 * i
+    elif name == "Giove":
+        mag += 0.005 * i
+    ra, dec = vec_to_radec(ecliptic_to_equatorial(g))
+    return Body(name, ra, dec, mag, delta, (1 + cos_i) / 2, math.acos(cos_el) * R2D, "planet")
+
+
 def planet_bodies(jd: float) -> list:
     earth = helio_ecliptic("Terra", jd)
-    out = []
-    for name in PLANETS:
-        p = helio_ecliptic(name, jd)
-        g = (p[0] - earth[0], p[1] - earth[1], p[2] - earth[2])
-        delta = math.sqrt(sum(c * c for c in g))
-        r = math.sqrt(sum(c * c for c in p))
-        r_e = math.sqrt(sum(c * c for c in earth))
-        cos_i = max(-1.0, min(1.0, (r * r + delta * delta - r_e * r_e) / (2 * r * delta)))
-        i = math.acos(cos_i) * R2D
-        sun_g = (-earth[0], -earth[1], -earth[2])
-        sun_d = r_e
-        cos_el = max(-1.0, min(1.0, (g[0] * sun_g[0] + g[1] * sun_g[1] + g[2] * sun_g[2]) / (delta * sun_d)))
-        mag = H0[name] + 5.0 * math.log10(r * delta)
-        if name == "Mercurio":
-            mag += 0.0380 * i - 0.000273 * i * i + 2e-6 * i ** 3
-        elif name == "Venere":
-            mag += 0.0009 * i + 0.000239 * i * i - 6.5e-7 * i ** 3
-        elif name == "Marte":
-            mag += 0.016 * i
-        elif name == "Giove":
-            mag += 0.005 * i
-        ra, dec = vec_to_radec(ecliptic_to_equatorial(g))
-        out.append(Body(name, ra, dec, mag, delta, (1 + cos_i) / 2, math.acos(cos_el) * R2D, "planet"))
-    return out
+    return [planet_body(n, jd, earth) for n in PLANETS]
 
 
 def sun_body(jd: float) -> Body:
@@ -276,6 +277,16 @@ def moon_body(jd: float) -> Body:
     k = (1 + math.cos(i)) / 2
     ia = i * R2D
     return Body("Luna", ra, dec, -12.7 + 0.026 * ia + 4e-9 * ia ** 4, dist / AU_KM, k, el, "moon", 2 * math.atan(1737.4 / dist) * R2D)
+
+
+def moon_topocentric(jd: float, lat: float, lon: float) -> Body:
+    """The Moon as seen from the observer: parallax (up to ~1 degree) applied, positions in J2000."""
+    moon = moon_body(jd)
+    prec = precession_matrix(jd)
+    ra_d, dec_d = vec_to_radec(mat_vec(prec, radec_to_vec(moon.ra, moon.dec)))
+    ra_t, dec_t = moon_parallax_correct(ra_d, dec_d, moon.dist_au * AU_KM, lst(jd, lon), lat)
+    moon.ra, moon.dec = vec_to_radec(mat_vec(transpose(prec), radec_to_vec(ra_t, dec_t)))
+    return moon
 
 
 def moon_waxing(jd: float) -> bool:

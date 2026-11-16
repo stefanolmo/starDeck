@@ -18,6 +18,8 @@ Nessuna dipendenza oltre a PySide6: i calcoli astronomici sono scritti in Python
   GeoNames), oppure ▾ per i luoghi salvati e ~70 predefiniti, oppure «Altro luogo…» con coordinate libere, salvabile tra i tuoi luoghi (★).
 - **Fuso orario**: l'orologio mostra e accetta l'**ora locale del luogo scelto** (con ora legale), non quella del computer. Il fuso viene dalla città
   trovata o, per coordinate libere, da quella più vicina (modificabile a mano; in mare aperto si usa il fuso nominale dalla longitudine).
+- **Sorge, culmina, tramonta**: tabella del giorno locale per Sole, Luna e pianeti, inizio e fine della notte astronomica (Sole a −18°), e le stesse
+  tre ore per qualsiasi astro selezionato. Gestisce circumpolari, astri che non sorgono, sole di mezzanotte e notte polare.
 - **Atmosfera**: colore del cielo da giorno a notte secondo l'altezza del Sole, stelle e pianeti deboli che spariscono col chiaro, orizzonte con punti cardinali.
 - **Interazione**: trascina per orientare, rotella per lo zoom (campo da 150° a 1°), clic su un astro per i dettagli (coordinate, altezza/azimut,
   magnitudine…), doppio clic per centrarlo e **seguirlo** mentre il cielo ruota, ricerca per nome (`Sirius`, `M31`, `Orione`, `Giove`…).
@@ -47,6 +49,7 @@ Pacchetto .deb (usa PySide6 di sistema): `packaging/build-deb.sh`, poi `sudo apt
 | Sole e pianeti | elementi kepleriani JPL «approximate positions» 1800–2050 | pochi primi d'arco (Giove/Saturno fino a ~10′) |
 | Luna | serie troncata di Meeus cap. 47 + parallasse | < 1′ (verificata sull'esempio 47.a di Meeus) |
 | Tempo siderale | GMST (IAU) | < 1″ |
+| Sorge/culmina/tramonta | altezza campionata ogni 15′ + bisezione; Sole −0,833°, Luna topocentrica −0,833°, stelle e pianeti −0,567° | ~1′ (confronto con astropy, 5 corpi) |
 | Magnitudini pianeti | formule dell'Astronomical Almanac, senza anelli di Saturno | ±0,3 |
 
 I calcoli sono verificati nei test contro valori noti (esempi di Meeus, congiunzione Venere–Giove del 9 giugno 2026, luna nuova/piena di novembre 2026)
@@ -59,7 +62,7 @@ Le città (`stardeck/data/cities.json.gz`, `tools/build_places.py`) vengono da [
 
 - Catalogo fino a magnitudine 6: a campi molto stretti (< 10°) mancano le stelle più deboli; niente stelle doppie/variabili, niente moto proprio.
 - Via Lattea come contorni di luminosità sfumati, non come immagine; nessuna texture della Luna né dei pianeti (Saturno ha un anello disegnato, fisso).
-- Mancano: orari di alba/tramonto/culmine, satelliti (ISS), comete, asteroidi, eclissi, confini delle costellazioni, rifrazione atmosferica,
+- Mancano: satelliti (ISS), comete, asteroidi, eclissi, confini delle costellazioni, rifrazione atmosferica,
   luce lunare nel colore del cielo, modalità a schermo intero/proiezione, esportazione di immagini.
 - Il fuso orario di un luogo scelto per coordinate è quello della città più vicina: vicino a un confine può essere sbagliato (si corregge a mano).
   L'archivio ha i nomi internazionali di GeoNames (Naples, Rome…): per le principali città italiane valgono anche i nomi italiani dei luoghi predefiniti.
@@ -75,4 +78,4 @@ QT_QPA_PLATFORM=offscreen python3 docs/make_screenshots.py
 ```
 
 Struttura: `astro.py` (tempo, coordinate, Sole/Luna/pianeti), `catalog.py` (dati), `skyview.py` (disegno e interazione del cielo),
-`mainwindow.py`, `settings_dialog.py`, `places.py`, `splash.py`, `theme.py`, `config.py`. Impostazioni in `~/.config/stardeck/stardeck.conf`.
+`events.py` (sorgere/culmine/tramonto), `mainwindow.py`, `settings_dialog.py`, `places.py`, `splash.py`, `theme.py`, `config.py`. Impostazioni in `~/.config/stardeck/stardeck.conf`.

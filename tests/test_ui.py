@@ -243,3 +243,26 @@ def test_parse_custom_ignores_garbage():
     from stardeck.places import parse_custom
     got = parse_custom("a|1|2;bad;x|abc|2;y|95|0;|1|1;ok|-33.9|151.2|Australia/Sydney")
     assert [(p.name, p.lat, p.lon, p.tz) for p in got] == [("a", 1.0, 2.0, ""), ("ok", -33.9, 151.2, "Australia/Sydney")]
+
+
+def test_events_card_and_clipping(win):
+    win._update_events(force=True)
+    win.show(); win.repaint()
+    sun = win.ev_cells["Sole"]
+    assert all(":" in c.text() for c in sun[1:])
+    assert "Notte astronomica" in win.night_label.text()
+    assert "SORGE E TRAMONTA" in win.ev_card.title_label.text()
+    # every label of the cards is fully visible: its height fits its text (nothing clipped)
+    for lab in (win.sky_sun, win.sky_moon, *[c for row in win.ev_cells.values() for c in row]):
+        assert lab.height() >= lab.fontMetrics().height()
+
+
+def test_events_follow_place_and_selection(win):
+    win.set_place("Tromsø", 69.65, 18.96, "Europe/Oslo")
+    win.view.set_time(astro.jd_from_datetime(datetime(2026, 12, 21, 12, 0, tzinfo=timezone.utc)))
+    win._update_events(force=True)
+    assert win.ev_cells["Sole"][1].text() == "non sorge" and win.ev_cells["Sole"][2].isHidden()
+    win.set_place("Roma", 41.9, 12.5, "Europe/Rome")
+    win.search.setText("Sirius")
+    win._do_search()
+    assert "Culmine" in win.info.text() and "Sorge" in win.info.text() and "Tramonta" in win.info.text()

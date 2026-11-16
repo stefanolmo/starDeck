@@ -216,15 +216,9 @@ class SkyView(QWidget):
         jd = self.jd
         bodies = {b.name: b for b in astro.planet_bodies(jd)}
         bodies["Sole"] = astro.sun_body(jd)
-        moon = astro.moon_body(jd)
-        # topocentric Moon: parallax is up to ~1 degree
+        moon = astro.moon_topocentric(jd, self.cfg.lat, self.cfg.lon)
         lst = astro.lst(jd, self.cfg.lon)
         prec = astro.precession_matrix(jd)
-        v_date = astro.mat_vec(prec, astro.radec_to_vec(moon.ra, moon.dec))
-        ra_d, dec_d = astro.vec_to_radec(v_date)
-        ra_t, dec_t = astro.moon_parallax_correct(ra_d, dec_d, moon.dist_au * astro.AU_KM, lst, self.cfg.lat)
-        v_topo = astro.mat_vec(astro.transpose(prec), astro.radec_to_vec(ra_t, dec_t))
-        moon.ra, moon.dec = astro.vec_to_radec(v_topo)
         bodies["Luna"] = moon
         self.bodies = bodies
         self.body_vecs = {n: astro.radec_to_vec(b.ra, b.dec) for n, b in bodies.items()}
