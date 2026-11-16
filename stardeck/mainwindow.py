@@ -6,13 +6,14 @@ from typing import Optional
 
 from PySide6.QtCore import QDateTime, QElapsedTimer, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QTextDocument
-from PySide6.QtWidgets import (QCheckBox, QCompleter, QDateTimeEdit, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QDateTimeEdit, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
                                QPushButton, QScrollArea, QSizePolicy, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from . import astro, theme
 from .catalog import Catalog, GREEK
 from .config import APP, ORG, Config
-from .settings_dialog import SettingsDialog
+from .places import PLACES, format_custom, parse_custom
+from .settings_dialog import LocationDialog, SettingsDialog
 from .skyview import Picked, SkyView
 from .widgets import Card
 
@@ -68,8 +69,15 @@ class MainWindow(QMainWindow):
                        f"<span style='font-size:17px;font-weight:800;color:{theme.ACCENT}'>Deck</span>")
         title.setContentsMargins(4, 0, 14, 0)
         tb.addWidget(title)
+        self.place_combo = QComboBox()
+        self.place_combo.setMinimumWidth(240)
+        self.place_combo.setMaxVisibleItems(24)
+        self.place_combo.setToolTip("Luogo di osservazione")
+        self.place_combo.activated.connect(self._place_chosen)
+        tb.addWidget(self.place_combo)
         self.place_label = QLabel()
         self.place_label.setObjectName("kv")
+        self.place_label.setContentsMargins(10, 0, 0, 0)
         tb.addWidget(self.place_label)
         sp = QWidget(); sp.setFixedWidth(16); sp.setObjectName("spacer")
         tb.addWidget(sp)
@@ -208,10 +216,52 @@ class MainWindow(QMainWindow):
         comp.activated.connect(lambda _t: self._do_search())
         self.search.setCompleter(comp)
 
+    def _all_places(self) -> list:
+        return [(n, la, lo, True) for n, la, lo in parse_custom(self.cfg.custom_places)] + [(n, la, lo, False) for n, la, lo in PLACES]
+
     def _update_place_label(self) -> None:
+        """Rebuilds the place list (saved places first) and shows the current one."""
+        c = self.place_combo
+        c.blockSignals(True)
+        c.clear()
+        places = self._all_places()
+        cur = -1
+        for n, la, lo, mine in places:
+            c.addItem(("★ " if mine else "") + n, (n, la, lo))
+            if cur < 0 and n == self.cfg.place and abs(la - self.cfg.lat) < 0.01 and abs(lo - self.cfg.lon) < 0.01:
+                cur = c.count() - 1
+        if cur < 0:                                   # current place not in the list (command line, old settings)
+            c.insertItem(0, self.cfg.place, (self.cfg.place, self.cfg.lat, self.cfg.lon))
+            cur = 0
+        c.addItem("Altro luogo…", None)
+        c.setCurrentIndex(cur)
+        c.blockSignals(False)
         ns = "N" if self.cfg.lat >= 0 else "S"
         ew = "E" if self.cfg.lon >= 0 else "O"
-        self.place_label.setText(f"{self.cfg.place}  {abs(self.cfg.lat):.2f}°{ns} {abs(self.cfg.lon):.2f}°{ew}")
+        self.place_label.setText(f"{abs(self.cfg.lat):.2f}°{ns}  {abs(self.cfg.lon):.2f}°{ew}")
+
+    def _place_chosen(self, _i: int) -> None:
+        d = self.place_combo.currentData()
+        if d is None:
+            dlg = LocationDialog(self.cfg.place, self.cfg.lat, self.cfg.lon, self)
+            if dlg.exec():
+                name, lat, lon = dlg.result_place()
+                if dlg.save.isChecked():
+                    mine = [p for p in parse_custom(self.cfg.custom_places) if p[0] != name]
+                    self.cfg.custom_places = format_custom([(name, lat, lon)] + mine)
+                self.set_place(name, lat, lon)
+            else:
+                self._update_place_label()
+            return
+        self.set_place(*d)
+
+    def set_place(self, name: str, lat: float, lon: float) -> None:
+        self.cfg.place, self.cfg.lat, self.cfg.lon = name, lat, lon
+        self.cfg.save(self.qs)
+        self.view.set_config(self.cfg)
+        self._update_place_label()
+        self._sky_txt = None
+        self.status.setText(f"Luogo: {name}")
 
     # ------------------------------------------------------------------ time
     def _tick(self) -> None:

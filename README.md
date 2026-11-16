@@ -14,7 +14,7 @@ Nessuna dipendenza oltre a PySide6: i calcoli astronomici sono scritti in Python
   (figure e nomi in italiano), 108 oggetti Messier + i principali NGC/IC (ammassi, nebulose, galassie), Via Lattea.
 - **Sistema solare**: Sole, Luna (fase e inclinazione corrette, parallasse topocentrica) e i sette pianeti da Mercurio a Nettuno, con magnitudine.
 - **Tempo**: tempo reale, pausa, avanti/indietro ×60, ×3600, ×86400 (1 min, 1 h, 1 giorno al secondo), ±1 ora/giorno, data e ora editabili, «adesso».
-- **Luogo**: 34 città/località predefinite o coordinate personalizzate (Impostazioni, `Ctrl+,`); fuso orario di sistema.
+- **Luogo**: ~70 città e località predefinite (Europa, mondo, osservatori) nel menu in alto a sinistra, oppure «Altro luogo…» con nome e coordinate, salvabile tra i tuoi luoghi (★); fuso orario di sistema.
 - **Atmosfera**: colore del cielo da giorno a notte secondo l'altezza del Sole, stelle e pianeti deboli che spariscono col chiaro, orizzonte con punti cardinali.
 - **Interazione**: trascina per orientare, rotella per lo zoom (campo da 150° a 1°), clic su un astro per i dettagli (coordinate, altezza/azimut,
   magnitudine…), doppio clic per centrarlo e **seguirlo** mentre il cielo ruota, ricerca per nome (`Sirius`, `M31`, `Orione`, `Giove`…).

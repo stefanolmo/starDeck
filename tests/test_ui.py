@@ -175,3 +175,33 @@ def test_splash_paints(app):
     for ms in (0, 1500, 2900):
         s.set_time(ms)
         assert not s.grab().isNull()
+
+
+def test_place_combo_switches_location(win):
+    c = win.place_combo
+    i = c.findText("Tokyo")
+    assert i >= 0
+    c.setCurrentIndex(i)
+    c.activated.emit(i)
+    assert win.cfg.place == "Tokyo" and win.cfg.lat == pytest.approx(35.68)
+    assert win.place_combo.currentText() == "Tokyo" and "35.68°N" in win.place_label.text()
+    assert Config().load(win.qs).place == "Tokyo"
+    win.view.grab()
+
+
+def test_custom_place_saved_and_listed(win, monkeypatch):
+    from stardeck import mainwindow
+    from stardeck.settings_dialog import LocationDialog
+    monkeypatch.setattr(LocationDialog, "exec", lambda self: 1)
+    monkeypatch.setattr(LocationDialog, "result_place", lambda self: ("Il mio giardino", 39.5, 16.1))
+    c = win.place_combo
+    c.setCurrentIndex(c.count() - 1)                       # "Altro luogo…"
+    c.activated.emit(c.count() - 1)
+    assert win.cfg.place == "Il mio giardino" and win.cfg.lat == pytest.approx(39.5)
+    assert c.itemText(0) == "★ Il mio giardino" and c.currentIndex() == 0
+    assert mainwindow.parse_custom(win.cfg.custom_places) == [("Il mio giardino", 39.5, 16.1)]
+
+
+def test_parse_custom_ignores_garbage():
+    from stardeck.places import parse_custom
+    assert parse_custom("a|1|2;bad;x|abc|2;y|95|0;|1|1;ok|-33.9|151.2") == [("a", 1.0, 2.0), ("ok", -33.9, 151.2)]

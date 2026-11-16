@@ -68,3 +68,48 @@ class SettingsDialog(QDialog):
         self.cfg.star_scale = self.scale.value() / 100.0
         self.cfg.show_splash = self.splash.isChecked()
         self.accept()
+
+
+class LocationDialog(QDialog):
+    """Pick any place on Earth: name + coordinates (decimal degrees), optionally saved in the place list."""
+
+    def __init__(self, name: str = "", lat: float = 0.0, lon: float = 0.0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Altro luogo")
+        self.setMinimumWidth(380)
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(10)
+        self.name = QLineEdit(name)
+        self.name.setPlaceholderText("es. Il mio giardino")
+        self.lat = QDoubleSpinBox(); self.lat.setRange(-90, 90); self.lat.setDecimals(4); self.lat.setSuffix(" °N (− = sud)")
+        self.lon = QDoubleSpinBox(); self.lon.setRange(-180, 180); self.lon.setDecimals(4); self.lon.setSuffix(" °E (− = ovest)")
+        self.lat.setValue(lat); self.lon.setValue(lon)
+        form.addRow("Nome", self.name)
+        form.addRow("Latitudine", self.lat)
+        form.addRow("Longitudine", self.lon)
+        lay.addLayout(form)
+        self.save = QCheckBox("Salva nell'elenco dei luoghi")
+        self.save.setChecked(True)
+        lay.addWidget(self.save)
+        hint = QLabel("Coordinate in gradi decimali (le trovi in qualsiasi mappa: clic destro sul punto).")
+        hint.setObjectName("muted"); hint.setWordWrap(True)
+        lay.addWidget(hint)
+        self.err = QLabel("")
+        self.err.setStyleSheet("color: #f87171;")
+        lay.addWidget(self.err)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton("Annulla"); cancel.clicked.connect(self.reject)
+        ok = QPushButton("Vai"); ok.setObjectName("primary"); ok.clicked.connect(self._accept)
+        row.addWidget(cancel); row.addWidget(ok)
+        lay.addLayout(row)
+
+    def _accept(self) -> None:
+        if not self.name.text().strip():
+            self.err.setText("Dai un nome al luogo.")
+            return
+        self.accept()
+
+    def result_place(self) -> tuple:
+        return self.name.text().strip(), self.lat.value(), self.lon.value()
