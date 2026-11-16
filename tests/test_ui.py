@@ -43,7 +43,7 @@ def win(app, catalog, tmp_path):
 
 
 def test_catalog_contents(catalog):
-    assert len(catalog.stars) > 5000 and catalog.stars[0].name == "Sirius"
+    assert catalog.grid.n > 117000 and catalog.grid.count_le(6.5) > 8000 and catalog.named[0].name == "Sirius"
     assert len(catalog.constellations) == 88 and len(catalog.dsos) > 500
     assert catalog.constellations["Ori"].name == "Orione"
     assert [r[1] for r in catalog.find("sirius")] == ["Sirius"]
@@ -111,7 +111,7 @@ def test_search_planet_and_unknown(win):
 
 
 def test_click_picks_object(win, app):
-    star = [s for s in win.cat.stars if s.name == "Capella"][0]          # high in the sky on this evening
+    star = win.cat.find_star("Capella")          # high in the sky on this evening
     p = Picked("star", star, star.vec)
     win.view.set_view(*reversed(win.view.altaz_of(p)), 20.0)
     win.view.grab()
@@ -266,3 +266,63 @@ def test_events_follow_place_and_selection(win):
     win.search.setText("Sirius")
     win._do_search()
     assert "Culmine" in win.info.text() and "Sorge" in win.info.text() and "Tramonta" in win.info.text()
+
+
+def _brute_force_visible(win, lim):
+    """Stars the painter should have drawn, found without the sky grid."""
+    fr = win.view.frame
+    g = win.cat.grid
+    n = 0
+    for i in range(g.n):
+        if g.mag[i] > lim:
+            break
+        p = fr.project((g.vx[i], g.vy[i], g.vz[i]))
+        if p is not None and p[2] >= fr.cos_lim and -10 <= p[0] <= fr.w + 10 and -10 <= p[1] <= fr.h + 10:
+            n += 1
+    return n
+
+
+def test_grid_culling_matches_brute_force(win):
+    win.mag_auto.setChecked(False)
+    win.mag_slider.setValue(95)
+    for az, alt, fov in ((160, 38, 100), (0, 89, 120), (300, -20, 30), (90, 5, 8)):
+        win.view.set_view(az, alt, fov)
+        win.view.grab()
+        assert win.view.stars_drawn == _brute_force_visible(win, 9.5), (az, alt, fov)
+
+
+def test_magnitude_limit_and_auto_mode(win):
+    win.view.set_view(160, 38, 150)
+    win.mag_auto.setChecked(True)
+    win.mag_slider.setValue(120)
+    win.view.grab()
+    wide = win.view.drawn_limit
+    win.view.set_view(160, 38, 5)
+    win.view.grab()
+    narrow = win.view.drawn_limit
+    assert wide < 9.0 and narrow == pytest.approx(12.0)          # wide fields are capped, zoomed views reach the limit
+    assert win.view.stars_drawn < 12000
+    win.mag_auto.setChecked(False)
+    win.view.set_view(160, 38, 150)
+    win.mag_slider.setValue(80)
+    win.view.grab()
+    assert win.view.drawn_limit == pytest.approx(8.0)
+    assert Config().load(win.qs).mag_limit == pytest.approx(8.0) and Config().load(win.qs).mag_auto is False
+    assert "stelle a schermo" in win.mag_info.text() or win.mag_info.text() == ""
+
+
+def test_faint_star_can_be_picked(win):
+    g = win.cat.grid
+    i = next(k for k in range(g.n) if 9.0 < g.mag[k] < 10.0 and g.dec[k] > 20)
+    st = win.cat.star(i)
+    win.mag_slider.setValue(110)
+    p = Picked("star", st, st.vec)
+    alt, az = win.view.altaz_of(p)
+    win.cfg.lat = 89.0                                     # near the pole every star with dec > 20 is above the horizon
+    win.view.set_config(win.cfg)
+    alt, az = win.view.altaz_of(p)
+    win.view.set_view(az, alt, 4.0)
+    win.view.grab()
+    QTest.mouseClick(win.view, Qt.LeftButton, Qt.NoModifier, QPointF(win.view.width() / 2, win.view.height() / 2).toPoint())
+    assert win.view.selection is not None and win.view.selection.kind == "star"
+    assert win.view.selection.obj.mag == pytest.approx(st.mag)

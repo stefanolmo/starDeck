@@ -30,6 +30,8 @@ class Config:
     show_cardinals: bool = True
     # display
     star_scale: float = 1.0
+    mag_limit: float = 6.5          # faintest stars drawn (catalogue goes to 12)
+    mag_auto: bool = True           # keep the number of stars on screen bounded: wide views show fewer faint stars
     show_splash: bool = True
 
     def load(self, qs) -> "Config":

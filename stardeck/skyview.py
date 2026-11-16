@@ -16,6 +16,7 @@ from .catalog import Catalog
 from .config import Config
 
 FOV_MIN, FOV_MAX = 1.0, 150.0
+STAR_BUDGET = 10000          # stars on screen the painter aims at in auto mode
 
 PLANET_COLORS = {"Mercurio": "#cfc6b8", "Venere": "#fff6dc", "Marte": "#ff8a5c", "Giove": "#f3dcb6", "Saturno": "#f0dc9a",
                  "Urano": "#9be8ee", "Nettuno": "#7fa6ff"}
@@ -145,6 +146,8 @@ class SkyView(QWidget):
         self.hover: Optional[Picked] = None
         self.track = False
         self._hits: list = []
+        self.drawn_limit = cfg.mag_limit
+        self.stars_drawn = 0
         self._press = None
         self._moved = False
         self._anim = None
@@ -180,8 +183,10 @@ class SkyView(QWidget):
         return p.vec
 
     def altaz_of(self, p: Picked) -> tuple:
-        fr = self.frame or self._make_frame()
-        return fr.altaz(self.current_vec(p))
+        return self._make_frame().altaz(self.current_vec(p))          # fresh frame: time or place may have changed since the last paint
+
+    def altaz_of_vec(self, v_j2000: tuple) -> tuple:
+        return self._make_frame().altaz(v_j2000)
 
     def goto(self, p: Picked, fov: Optional[float] = None, track: bool = False) -> None:
         alt, az = self.altaz_of(p)
@@ -227,10 +232,21 @@ class SkyView(QWidget):
                                                           self.body_vecs["Sole"]))
         self.sun_alt = sun_alt
 
-    def limiting_mag(self) -> float:
-        lim = 6.2 if self.fov < 110 else 5.4
+    def limiting_mag(self, fr: Optional[Frame] = None) -> float:
+        """Faintest magnitude drawn now: the user's limit, lowered by daylight, and (auto mode) so that a bounded number of stars is on screen."""
+        lim = self.cfg.mag_limit
         if self.cfg.show_atmosphere:
             lim -= 8.0 * _clamp((self.sun_alt + 18.0) / 18.0, 0.0, 1.0)
+        if self.cfg.mag_auto:
+            fr = fr or self.frame
+            if fr is not None:
+                theta = math.acos(max(-1.0, min(1.0, fr.cos_lim)))
+                frac = max(0.02, (1.0 - math.cos(theta)) / 2.0)      # share of the sky inside the window
+                g = self.cat.grid
+                m = lim
+                while m > 3.0 and g.count_le(m) * frac > STAR_BUDGET:
+                    m -= 0.25
+                lim = m
         return lim
 
     # ------------------------------------------------------------------ painting
@@ -401,6 +417,12 @@ class SkyView(QWidget):
         """Brightness outlines drawn at 1/6 resolution and scaled up smoothly: soft edges instead of contour steps."""
         f = 6
         w, h = max(1, fr.w // f), max(1, fr.h // f)
+        key = (tuple(round(x, 3) for row in fr.M for x in row), w, h, round(fr.s, 1), int(night * 20), round(self.fov, 1))
+        cached = getattr(self, "_mw_cache", None)
+        if cached is not None and cached[0] == key:                  # same view as the last frame: reuse the image
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            p.drawImage(self.rect(), cached[1])
+            return
         img = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent)
         q = QPainter(img)
@@ -427,6 +449,7 @@ class SkyView(QWidget):
                 if len(poly) > 2:
                     q.drawPolygon(QPolygonF(poly))
         q.end()
+        self._mw_cache = (key, img)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.drawImage(self.rect(), img)
 
@@ -474,45 +497,75 @@ class SkyView(QWidget):
 
     # ---- stars
     def _paint_stars(self, p: QPainter, fr: Frame) -> None:
-        lim = self.limiting_mag()
+        lim = self.limiting_mag(fr)
+        self.drawn_limit = lim
         zoom = _clamp((60.0 / self.fov) ** 0.45, 0.8, 2.4) * self.cfg.star_scale
+        g = self.cat.grid
+        mag_a, cls_a, fal_a, vx, vy, vz = g.mag, g.cls, g.fal, g.vx, g.vy, g.vz
         M, cx, cy, s, cos_lim = fr.M, fr.cx, fr.cy, fr.s, fr.cos_lim
         (a0, a1, a2), (b0, b1, b2), (c0, c1, c2) = M
+        axis = M[0]
+        theta = math.acos(max(-1.0, min(1.0, cos_lim)))
         w, h = fr.w + 10, fr.h + 10
-        p.setPen(Qt.NoPen)
+        hit_lim = 5.2 if self.fov >= 40 else min(5.2 + (40.0 - self.fov) * 0.15, 12.0)
         halo_list = []
-        for st in self.cat.stars:
-            mag = st.mag
-            if mag > lim:
-                break
-            vx, vy, vz = st.vec
-            d0 = a0 * vx + a1 * vy + a2 * vz
-            if d0 < cos_lim:
+        faint = [[[] for _ in range(4)] for _ in range(5)]      # [colour group][alpha class] -> points, drawn in batches
+        p.setPen(Qt.NoPen)
+        zk = zoom * 0.62
+        hits = self._hits
+        drawn = 0
+        ct, st_ = math.cos(theta), math.sin(theta)
+        ax0, ax1, ax2 = axis
+        for cx0, cx1, cx2, cr, sr, idx in g.flat_cells:
+            # cell entirely outside the window?  angle(axis, centre) > theta + radius  <=>  dot < cos(theta + radius)
+            if ax0 * cx0 + ax1 * cx1 + ax2 * cx2 < ct * cr - st_ * sr:
                 continue
-            k = 2.0 / (1.0 + d0) * s
-            x = cx + k * (b0 * vx + b1 * vy + b2 * vz)
-            y = cy - k * (c0 * vx + c1 * vy + c2 * vz)
-            if x < -10 or y < -10 or x > w or y > h:
-                continue
-            r = (0.75 + 0.42 * (lim + 0.3 - mag)) * zoom * 0.62
-            col = _STAR_COLORS[int(_clamp((st.bv + 0.3) * 10, 0, 25))]
-            if r < 1.0:
-                col = QColor(col)
-                col.setAlphaF(_clamp(r / 0.9 + 0.15, 0.2, 1.0))
-                r = 0.55 + r * 0.3
-            p.setBrush(col)
-            p.drawEllipse(QPointF(x, y), r, r)
-            if mag < 2.3:
-                halo_list.append((x, y, r, col))
-            if (mag < 5.2 or self.fov < 40) and not (self.cfg.show_ground and fr.below_horizon(st.vec)):
-                self._hits.append((x, y, max(r, 6.0), 2 if (st.name or mag < 3) else 4, Picked("star", st, st.vec)))
+            for i in idx:
+                mag = mag_a[i]
+                if mag > lim:
+                    break
+                x_, y_, z_ = vx[i], vy[i], vz[i]
+                d0 = a0 * x_ + a1 * y_ + a2 * z_
+                if d0 < cos_lim:
+                    continue
+                k = 2.0 / (1.0 + d0) * s
+                x = cx + k * (b0 * x_ + b1 * y_ + b2 * z_)
+                y = cy - k * (c0 * x_ + c1 * y_ + c2 * z_)
+                if x < -10 or y < -10 or x > w or y > h:
+                    continue
+                drawn += 1
+                r = (3.48 - 0.42 * mag) * zk
+                if r < 1.0:                                      # sub-pixel star: a faint point, batched
+                    if mag < 6.6:
+                        al = 3 if r > 0.75 else 2 if r > 0.5 else 1 if r > 0.3 else 0
+                    else:
+                        al = fal_a[i]
+                    faint[cls_a[i] // 6][al].append(QPointF(x, y))
+                else:
+                    col = _STAR_COLORS[cls_a[i]]
+                    p.setBrush(col)
+                    p.drawEllipse(QPointF(x, y), r, r)
+                    if mag < 2.3:
+                        halo_list.append((x, y, r, col))
+                if mag < hit_lim:
+                    hits.append((x, y, r if r > 6.0 else 6.0, 2 if mag < 3 else 4, i))
+        self.stars_drawn = drawn
+        p.setBrush(Qt.NoBrush)
+        for cc, row in enumerate(faint):
+            for al, pts in enumerate(row):
+                if pts:
+                    col = QColor(_STAR_COLORS[min(25, cc * 6 + 3)])
+                    col.setAlphaF(0.25 + 0.25 * al)
+                    p.setPen(QPen(col, 1.25 * zoom ** 0.3, Qt.SolidLine, Qt.FlatCap))
+                    p.drawPoints(QPolygonF(pts))
+        p.setPen(Qt.NoPen)
         for x, y, r, col in halo_list:
-            g = QRadialGradient(QPointF(x, y), r * 4.2)
+            gr = QRadialGradient(QPointF(x, y), r * 4.2)
             c = QColor(col); c.setAlpha(95)
-            g.setColorAt(0, c)
+            gr.setColorAt(0, c)
             c = QColor(col); c.setAlpha(0)
-            g.setColorAt(1, c)
-            p.setBrush(QBrush(g))
+            gr.setColorAt(1, c)
+            p.setBrush(QBrush(gr))
             p.drawEllipse(QPointF(x, y), r * 4.2, r * 4.2)
 
     # ---- Sun, Moon, planets
@@ -696,6 +749,9 @@ class SkyView(QWidget):
                 score = d + prio * 4.0
                 if score < best_d:
                     best, best_d = obj, score
+        if isinstance(best, int):                              # a star: build the object only for the one actually picked
+            st = self.cat.star(best)
+            return Picked("star", st, st.vec)
         return best
 
     def select(self, obj: Optional[Picked]) -> None:

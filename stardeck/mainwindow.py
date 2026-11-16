@@ -8,7 +8,7 @@ from typing import Optional
 from PySide6.QtCore import QDateTime, QElapsedTimer, QSettings, QStringListModel, Qt, QTimer, QTimeZone
 from PySide6.QtGui import QAction, QKeySequence, QTextDocument
 from PySide6.QtWidgets import (QCheckBox, QCompleter, QDateTimeEdit, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
-                               QPushButton, QScrollArea, QSizePolicy, QToolBar, QToolButton, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSizePolicy, QSlider, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from . import astro, events, theme
 from .catalog import Catalog, GREEK
@@ -218,6 +218,29 @@ class MainWindow(QMainWindow):
         self.night_label.setTextFormat(Qt.PlainText)
         self.ev_card.body.addWidget(self.night_label)
         sl.addWidget(self.ev_card)
+        stars = Card("Stelle")
+        self.mag_label = QLabel()
+        self.mag_label.setObjectName("kv")
+        self.mag_label.setTextFormat(Qt.PlainText)
+        stars.body.addWidget(self.mag_label)
+        self.mag_slider = QSlider(Qt.Horizontal)
+        self.mag_slider.setRange(30, 120)
+        self.mag_slider.setValue(round(self.cfg.mag_limit * 10))
+        self.mag_slider.setToolTip("Magnitudine limite: più alto = più stelle deboli (il catalogo arriva alla 12)")
+        self.mag_slider.valueChanged.connect(self._mag_changed)
+        stars.body.addWidget(self.mag_slider)
+        self.mag_auto = QCheckBox("Adatta al campo visivo (consigliato)")
+        self.mag_auto.setChecked(self.cfg.mag_auto)
+        self.mag_auto.setToolTip("Con campi larghi limita le stelle più deboli per mantenere fluido il disegno; zoomando compaiono.\n"
+                                 "Disattivato: disegna tutte le stelle fino al limite scelto (con la 12 a campo largo può essere lento).")
+        self.mag_auto.toggled.connect(self._mag_auto_changed)
+        stars.body.addWidget(self.mag_auto)
+        self.mag_info = QLabel()
+        self.mag_info.setObjectName("muted")
+        self.mag_info.setTextFormat(Qt.PlainText)
+        stars.body.addWidget(self.mag_info)
+        sl.insertWidget(2, stars)                   # right after the object and sky cards
+        self._mag_changed(self.mag_slider.value(), save=False)
         layers = Card("Visualizza")
         self.layer_boxes = {}
         for key, text, sc in LAYERS:
@@ -526,6 +549,27 @@ class MainWindow(QMainWindow):
         self.sky_sun.setText(f"Sole: {v.sun_alt:+.1f}° · {astro.twilight_state(v.sun_alt)}")
         self.sky_moon.setText(f"Luna: {astro.moon_phase_name(moon.phase, v.moon_waxing)} {moon.phase * 100:.0f}%")
         self._update_events()
+        self._update_mag_info()
+
+    # ------------------------------------------------------------------ star magnitude
+    def _mag_changed(self, v: int, save: bool = True) -> None:
+        self.cfg.mag_limit = v / 10.0
+        self.mag_label.setText(f"Magnitudine limite: {v / 10.0:.1f}")
+        if save:
+            self.view.set_config(self.cfg)
+            self.cfg.save(self.qs)
+
+    def _mag_auto_changed(self, on: bool) -> None:
+        self.cfg.mag_auto = on
+        self.view.set_config(self.cfg)
+        self.cfg.save(self.qs)
+
+    def _update_mag_info(self) -> None:
+        v = self.view
+        txt = (f"{v.stars_drawn:,} stelle a schermo · limite effettivo {v.drawn_limit:.1f}"
+               f"\n{v.cat.grid.count_le(self.cfg.mag_limit):,} nel catalogo fino alla {self.cfg.mag_limit:.1f}").replace(",", ".")
+        if txt != self.mag_info.text():
+            self.mag_info.setText(txt)
 
     # ------------------------------------------------------------------ rise / transit / set
     def _event_args(self) -> tuple:
@@ -595,7 +639,7 @@ class MainWindow(QMainWindow):
         kind, _label, obj = res[0]
         if kind == "const":
             self.view.select(None)
-            alt, az = self.view.frame.altaz(obj.vec)
+            alt, az = self.view.altaz_of_vec(obj.vec)
             self.view.track = False
             self.view.animate_to(az, alt, 55.0)
         else:

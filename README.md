@@ -10,7 +10,7 @@ Nessuna dipendenza oltre a PySide6: i calcoli astronomici sono scritti in Python
 
 ## Cosa c'è (versione 0.1)
 
-- **Cielo**: proiezione stereografica a tutto cielo, ~5000 stelle fino a magnitudine 6 con colore dall'indice B−V, 88 costellazioni
+- **Cielo**: proiezione stereografica a tutto cielo, ~118.000 stelle fino a magnitudine 12 (complete fino a circa la 9,5) con colore dall'indice B−V, 88 costellazioni
   (figure e nomi in italiano), 108 oggetti Messier + i principali NGC/IC (ammassi, nebulose, galassie), Via Lattea.
 - **Sistema solare**: Sole, Luna (fase e inclinazione corrette, parallasse topocentrica) e i sette pianeti da Mercurio a Nettuno, con magnitudine.
 - **Tempo**: tempo reale, pausa, avanti/indietro ×60, ×3600, ×86400 (1 min, 1 h, 1 giorno al secondo), ±1 ora/giorno, data e ora editabili, «adesso».
@@ -18,6 +18,9 @@ Nessuna dipendenza oltre a PySide6: i calcoli astronomici sono scritti in Python
   GeoNames), oppure ▾ per i luoghi salvati e ~70 predefiniti, oppure «Altro luogo…» con coordinate libere, salvabile tra i tuoi luoghi (★).
 - **Fuso orario**: l'orologio mostra e accetta l'**ora locale del luogo scelto** (con ora legale), non quella del computer. Il fuso viene dalla città
   trovata o, per coordinate libere, da quella più vicina (modificabile a mano; in mare aperto si usa il fuso nominale dalla longitudine).
+- **Magnitudine limite**: cursore da 3 a 12 nel pannello «Stelle», con contatore delle stelle a schermo. In modalità «adatta al campo» (default)
+  i campi larghi mostrano meno stelle deboli per restare fluidi (circa 10.000 a schermo) e zoomando compaiono fino al limite scelto; disattivandola
+  si disegna tutto (con la 12 a campo largo sono ~60.000 stelle: ~0,3 s a fotogramma).
 - **Sorge, culmina, tramonta**: tabella del giorno locale per Sole, Luna e pianeti, inizio e fine della notte astronomica (Sole a −18°), e le stesse
   tre ore per qualsiasi astro selezionato. Gestisce circumpolari, astri che non sorgono, sole di mezzanotte e notte polare.
 - **Atmosfera**: colore del cielo da giorno a notte secondo l'altezza del Sole, stelle e pianeti deboli che spariscono col chiaro, orizzonte con punti cardinali.
@@ -45,7 +48,7 @@ Pacchetto .deb (usa PySide6 di sistema): `packaging/build-deb.sh`, poi `sudo apt
 
 | Cosa | Metodo | Precisione |
 |---|---|---|
-| Stelle | catalogo J2000 (Yale/Hipparcos tramite d3-celestial) + precessione IAU 1976 | ~0,01° (senza moto proprio, aberrazione, rifrazione) |
+| Stelle | catalogo J2000 (HYG v4.1: Hipparcos, Yale, Gliese) + precessione IAU 1976 | ~0,01° (senza moto proprio, aberrazione, rifrazione) |
 | Sole e pianeti | elementi kepleriani JPL «approximate positions» 1800–2050 | pochi primi d'arco (Giove/Saturno fino a ~10′) |
 | Luna | serie troncata di Meeus cap. 47 + parallasse | < 1′ (verificata sull'esempio 47.a di Meeus) |
 | Tempo siderale | GMST (IAU) | < 1″ |
@@ -54,13 +57,15 @@ Pacchetto .deb (usa PySide6 di sistema): `packaging/build-deb.sh`, poi `sudo apt
 
 I calcoli sono verificati nei test contro valori noti (esempi di Meeus, congiunzione Venere–Giove del 9 giugno 2026, luna nuova/piena di novembre 2026)
 e, durante lo sviluppo, contro astropy (Sirio: errore in altezza/azimut 0,006°).
-Il catalogo (`stardeck/data/sky.json.gz`, 157 KiB) si rigenera con `python3 tools/build_catalog.py`; i dati vengono da
-[d3-celestial](https://github.com/ofrohn/d3-celestial) di Olaf Frohn (licenza BSD-3).
+Il catalogo (`stardeck/data/stars.bin.gz` 0,9 MiB e `sky.json.gz` 108 KiB) si rigenera con `python3 tools/build_catalog.py`; i dati vengono da
+[HYG](https://github.com/astronexus/HYG-Database) (stelle, **CC BY-SA 4.0**: il file `stars.bin.gz` resta con quella licenza anche se il codice è MIT) e da
+[d3-celestial](https://github.com/ofrohn/d3-celestial) di Olaf Frohn (nomi, costellazioni, profondo cielo, Via Lattea; licenza BSD-3).
 Le città (`stardeck/data/cities.json.gz`, `tools/build_places.py`) vengono da [GeoNames](https://www.geonames.org) (licenza CC-BY 4.0).
 
 ## Limiti noti (da qui si parte per le prossime versioni)
 
-- Catalogo fino a magnitudine 6: a campi molto stretti (< 10°) mancano le stelle più deboli; niente stelle doppie/variabili, niente moto proprio.
+- Catalogo fino a magnitudine 12 e non oltre: la 16 richiederebbe Gaia/UCAC4 (centinaia di milioni di stelle, decine di GB) e un disegno su GPU o numpy, non un file incluso in un
+  programma Python puro. Oltre la 9,5 il catalogo è incompleto (è Hipparcos, non un censimento). Niente stelle doppie/variabili, niente moto proprio.
 - Via Lattea come contorni di luminosità sfumati, non come immagine; nessuna texture della Luna né dei pianeti (Saturno ha un anello disegnato, fisso).
 - Mancano: satelliti (ISS), comete, asteroidi, eclissi, confini delle costellazioni, rifrazione atmosferica,
   luce lunare nel colore del cielo, modalità a schermo intero/proiezione, esportazione di immagini.

@@ -31,7 +31,7 @@ def main():
     w.view.set_view(160.0, 38.0, 100.0)
     app.processEvents()
     w.grab().save(os.path.join(HERE, "main.png"))
-    star = [s for s in w.cat.stars if s.name == "Betelgeuse"][0]
+    star = w.cat.find_star("Betelgeuse")
     w.view.fov = 28.0
     w._pick(Picked("star", star, star.vec), 28.0)
     w.view._anim = None

@@ -21,7 +21,7 @@ stardeck = "stardeck.__main__:main"
 packages = ["stardeck"]
 
 [tool.setuptools.package-data]
-stardeck = ["stardeck.svg", "data/sky.json.gz", "data/cities.json.gz"]
+stardeck = ["stardeck.svg", "data/sky.json.gz", "data/stars.bin.gz", "data/cities.json.gz"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
