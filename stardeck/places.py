@@ -1,4 +1,12 @@
 """Preset observing locations (name, latitude °N, longitude °E)."""
+import gzip
+import json
+import math
+import os
+import unicodedata
+from typing import NamedTuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 PLACES = [
     ("Roma", 41.90, 12.50), ("Milano", 45.46, 9.19), ("Torino", 45.07, 7.69), ("Venezia", 45.44, 12.33),
     ("Bologna", 44.49, 11.34), ("Firenze", 43.77, 11.26), ("Napoli", 40.85, 14.27), ("Bari", 41.12, 16.87),
@@ -17,21 +25,127 @@ PLACES = [
 ]
 
 
+TZ_OVERRIDE = {"Polo Nord": "UTC", "Polo Sud": "UTC", "Equatore (0°, 0°)": "UTC", "Mauna Kea (Hawaii)": "Pacific/Honolulu",
+               "Deserto di Atacama": "America/Santiago", "Stromboli": "Europe/Rome", "Cortina d'Ampezzo": "Europe/Rome"}
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "cities.json.gz")
+
+
+def norm(text: str) -> str:
+    """Lower-case, accents and punctuation stripped: 'Città del Capo' -> 'citta del capo'."""
+    t = unicodedata.normalize("NFKD", text.lower())
+    return "".join(ch for ch in t if not unicodedata.combining(ch) and (ch.isalnum() or ch == " ")).strip()
+
+
+def valid_tz(name: str) -> bool:
+    try:
+        ZoneInfo(name)
+        return True
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return False
+
+
+def tzinfo(name: str):
+    """ZoneInfo for an IANA name; None (= system local time) when empty or unknown."""
+    return ZoneInfo(name) if name and valid_tz(name) else None
+
+
+class Place(NamedTuple):
+    name: str
+    lat: float
+    lon: float
+    tz: str = ""
+    cc: str = ""
+    pop: int = 0
+    mine: bool = False
+
+    @property
+    def label(self) -> str:
+        return f"{self.name} · {self.cc}" if self.cc else self.name
+
+
+class PlaceDB:
+    """Offline gazetteer (GeoNames cities >= 15000 inhabitants) + the preset list: search by name, nearest-city time zone."""
+
+    def __init__(self, path: str = DB_PATH):
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            raw = json.load(f)
+        tzs = raw["tz"]
+        self.cities = [Place(n, la, lo, tzs[ti], cc, pop) for n, cc, la, lo, ti, pop in raw["c"]]
+        self._keys = [norm(c.name) for c in self.cities]
+
+    def guess_tz(self, lat: float, lon: float, name: str = "") -> str:
+        """Time zone of the nearest city; Etc/GMT±n from the longitude if nothing is within ~6 degrees."""
+        if name in TZ_OVERRIDE:
+            return TZ_OVERRIDE[name]
+        best, best_d = None, 1e9
+        cl = math.cos(math.radians(lat))
+        for c in self.cities:
+            dx = ((c.lon - lon + 180.0) % 360.0 - 180.0) * cl
+            d = dx * dx + (c.lat - lat) ** 2
+            if d < best_d:
+                best, best_d = c, d
+        if best is not None and best_d < 36.0:
+            return best.tz
+        off = round(lon / 15.0)
+        return "UTC" if off == 0 else f"Etc/GMT{-off:+d}"
+
+    def search(self, text: str, extra=(), limit: int = 14) -> list:
+        """Places whose name starts with / contains `text`; `extra` (saved and preset places) come first, then cities by population."""
+        t = norm(text)
+        if len(t) < 2:
+            return []
+        scored = []
+        for p in extra:
+            k = norm(p.name)
+            if k.startswith(t):
+                scored.append((0, 0, 0, p))
+            elif t in k:
+                scored.append((1, 0, 0, p))
+        for k, c in zip(self._keys, self.cities):
+            if k.startswith(t):
+                scored.append((0, 1, -c.pop, c))
+            elif t in k:
+                scored.append((1, 1, -c.pop, c))
+        scored.sort(key=lambda r: r[:3])
+        out = []
+        for *_, p in scored:
+            if any(abs(p.lat - q.lat) < 0.2 and abs(p.lon - q.lon) < 0.2 for q in out):
+                continue                                       # same town listed twice (Roma / Rome)
+            out.append(p)
+            if len(out) >= limit:
+                break
+        return out
+
+
+_db = None
+
+
+def db() -> PlaceDB:
+    global _db
+    if _db is None:
+        _db = PlaceDB()
+    return _db
+
+
+def preset_places() -> list:
+    return [Place(n, la, lo, TZ_OVERRIDE.get(n, "")) for n, la, lo in PLACES]
+
+
 def parse_custom(text: str) -> list:
-    """'Nome|lat|lon;Nome2|lat|lon' -> [(name, lat, lon)] (malformed entries are skipped)."""
+    """'Nome|lat|lon[|tz];...' -> [Place] (malformed entries are skipped)."""
     out = []
     for part in text.split(";"):
         bits = part.split("|")
-        if len(bits) != 3:
+        if len(bits) not in (3, 4):
             continue
         try:
             lat, lon = float(bits[1]), float(bits[2])
         except ValueError:
             continue
         if bits[0].strip() and -90 <= lat <= 90 and -180 <= lon <= 180:
-            out.append((bits[0].strip(), lat, lon))
+            out.append(Place(bits[0].strip(), lat, lon, bits[3].strip() if len(bits) == 4 else "", mine=True))
     return out
 
 
 def format_custom(places: list) -> str:
-    return ";".join(f"{n.replace('|', ' ').replace(';', ' ')}|{la:.5f}|{lo:.5f}" for n, la, lo in places)
+    return ";".join(f"{p.name.replace('|', ' ').replace(';', ' ')}|{p.lat:.5f}|{p.lon:.5f}|{p.tz}" for p in places)

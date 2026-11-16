@@ -13,6 +13,7 @@ class Config:
     place: str = "Roma"
     lat: float = 41.90              # degrees north
     lon: float = 12.50              # degrees east
+    tz: str = ""                    # IANA time zone of the place; empty = guessed from the coordinates
     custom_places: str = ""         # user-saved places, "name|lat|lon;..." (see places.parse_custom)
     # layers
     show_constellation_lines: bool = True

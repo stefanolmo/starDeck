@@ -14,7 +14,10 @@ Nessuna dipendenza oltre a PySide6: i calcoli astronomici sono scritti in Python
   (figure e nomi in italiano), 108 oggetti Messier + i principali NGC/IC (ammassi, nebulose, galassie), Via Lattea.
 - **Sistema solare**: Sole, Luna (fase e inclinazione corrette, parallasse topocentrica) e i sette pianeti da Mercurio a Nettuno, con magnitudine.
 - **Tempo**: tempo reale, pausa, avanti/indietro ×60, ×3600, ×86400 (1 min, 1 h, 1 giorno al secondo), ±1 ora/giorno, data e ora editabili, «adesso».
-- **Luogo**: ~70 città e località predefinite (Europa, mondo, osservatori) nel menu in alto a sinistra, oppure «Altro luogo…» con nome e coordinate, salvabile tra i tuoi luoghi (★); fuso orario di sistema.
+- **Luogo**: scrivi una città nella barra in alto e scegli dall'**autocompletamento** (archivio offline di ~34.000 città con più di 15.000 abitanti,
+  GeoNames), oppure ▾ per i luoghi salvati e ~70 predefiniti, oppure «Altro luogo…» con coordinate libere, salvabile tra i tuoi luoghi (★).
+- **Fuso orario**: l'orologio mostra e accetta l'**ora locale del luogo scelto** (con ora legale), non quella del computer. Il fuso viene dalla città
+  trovata o, per coordinate libere, da quella più vicina (modificabile a mano; in mare aperto si usa il fuso nominale dalla longitudine).
 - **Atmosfera**: colore del cielo da giorno a notte secondo l'altezza del Sole, stelle e pianeti deboli che spariscono col chiaro, orizzonte con punti cardinali.
 - **Interazione**: trascina per orientare, rotella per lo zoom (campo da 150° a 1°), clic su un astro per i dettagli (coordinate, altezza/azimut,
   magnitudine…), doppio clic per centrarlo e **seguirlo** mentre il cielo ruota, ricerca per nome (`Sirius`, `M31`, `Orione`, `Giove`…).
@@ -29,7 +32,7 @@ Nessuna dipendenza oltre a PySide6: i calcoli astronomici sono scritti in Python
 ```bash
 ./install.sh            # venv in ~/.local/share/stardeck, comando "stardeck", voce di menu
 stardeck                # il cielo di adesso, per il luogo salvato (default Roma)
-stardeck --time "2026-12-24 22:30" --lat 38.9 --lon 16.6 --view 180,40,90      # data, luogo e vista a piacere
+stardeck --time "2026-12-24 22:30" --lat 38.9 --lon 16.6 --view 180,40,90      # ora locale del luogo; --tz Europe/Rome per forzare il fuso
 stardeck --no-splash    # senza splash screen di 3 secondi (o STARDECK_NO_SPLASH=1)
 ```
 
@@ -50,6 +53,7 @@ I calcoli sono verificati nei test contro valori noti (esempi di Meeus, congiunz
 e, durante lo sviluppo, contro astropy (Sirio: errore in altezza/azimut 0,006°).
 Il catalogo (`stardeck/data/sky.json.gz`, 157 KiB) si rigenera con `python3 tools/build_catalog.py`; i dati vengono da
 [d3-celestial](https://github.com/ofrohn/d3-celestial) di Olaf Frohn (licenza BSD-3).
+Le città (`stardeck/data/cities.json.gz`, `tools/build_places.py`) vengono da [GeoNames](https://www.geonames.org) (licenza CC-BY 4.0).
 
 ## Limiti noti (da qui si parte per le prossime versioni)
 
@@ -57,8 +61,8 @@ Il catalogo (`stardeck/data/sky.json.gz`, 157 KiB) si rigenera con `python3 tool
 - Via Lattea come contorni di luminosità sfumati, non come immagine; nessuna texture della Luna né dei pianeti (Saturno ha un anello disegnato, fisso).
 - Mancano: orari di alba/tramonto/culmine, satelliti (ISS), comete, asteroidi, eclissi, confini delle costellazioni, rifrazione atmosferica,
   luce lunare nel colore del cielo, modalità a schermo intero/proiezione, esportazione di immagini.
-- Il fuso orario è quello del sistema, non quello del luogo scelto: per vedere il cielo di Tokyo «alle 22 locali» imposta l'ora in base al tuo fuso
-  (o usa `--time ...Z` in UTC).
+- Il fuso orario di un luogo scelto per coordinate è quello della città più vicina: vicino a un confine può essere sbagliato (si corregge a mano).
+  L'archivio ha i nomi internazionali di GeoNames (Naples, Rome…): per le principali città italiane valgono anche i nomi italiani dei luoghi predefiniti.
 - Verificato nella sandbox di sviluppo (Linux, Qt offscreen, 26 test, screenshot): **non** ancora provato su un desktop Ubuntu reale con mouse e GPU;
   il rendering è software (QPainter), ~20 ms a pieno campo.
 

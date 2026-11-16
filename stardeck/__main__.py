@@ -9,21 +9,25 @@ from PySide6.QtWidgets import QApplication
 
 from . import __version__, astro, theme
 from .mainwindow import APP_NAME, MainWindow
+from .places import tzinfo, valid_tz
 from .splash import SplashScreen
 
 
-def parse_when(text: str) -> float:
-    """'2026-12-24 22:30' (local time) or ISO with offset/Z -> Julian date."""
+def parse_when(text: str, tz=None) -> float:
+    """'2026-12-24 22:30' (wall-clock time at the observing place, `tz`) or ISO with offset/Z -> Julian date."""
     from datetime import datetime
-    t = text.strip().replace("Z", "+00:00")
-    return astro.jd_from_datetime(datetime.fromisoformat(t))
+    d = datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    if d.tzinfo is None and tz is not None:
+        d = d.replace(tzinfo=tz)
+    return astro.jd_from_datetime(d)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="stardeck", description="Virtual planetarium: stars, constellations, planets, Sun and Moon for any time and place")
-    ap.add_argument("--time", metavar="YYYY-MM-DD[ HH:MM]", help="start frozen at this local time instead of 'now' (ISO 8601, 'Z' for UTC)")
+    ap.add_argument("--time", metavar="YYYY-MM-DD[ HH:MM]", help="start frozen at this time instead of 'now': wall-clock time at the observing place (ISO 8601; 'Z' or an offset for absolute time)")
     ap.add_argument("--lat", type=float, help="latitude in degrees north (overrides the saved location for this run)")
     ap.add_argument("--lon", type=float, help="longitude in degrees east")
+    ap.add_argument("--tz", metavar="ZONE", help="IANA time zone of the place (default: guessed from the coordinates), e.g. Europe/Rome")
     ap.add_argument("--view", metavar="AZ,ALT[,FOV]", help="initial view direction in degrees (azimuth from north towards east)")
     ap.add_argument("--screenshot", metavar="PNG", help="(development) save a screenshot and exit")
     ap.add_argument("--no-splash", action="store_true", help="do not show the splash screen")
@@ -41,16 +45,20 @@ def main(argv=None) -> int:
     app.setFont(f)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    jd = parse_when(args.time) if args.time else None
-    w = MainWindow(jd=jd)
-    if args.lat is not None:
-        w.cfg.lat = args.lat
-        w.cfg.place = "Personalizzato"
-    if args.lon is not None:
-        w.cfg.lon = args.lon
-        w.cfg.place = "Personalizzato"
-    w._update_place_label()
-    w.view.set_config(w.cfg)
+    w = MainWindow()
+    if args.lat is not None or args.lon is not None or args.tz:
+        lat = args.lat if args.lat is not None else w.cfg.lat
+        lon = args.lon if args.lon is not None else w.cfg.lon
+        name = "Personalizzato" if (args.lat is not None or args.lon is not None) else w.cfg.place
+        tz = args.tz if args.tz and valid_tz(args.tz) else None
+        if args.tz and tz is None:
+            ap.error(f"unknown time zone: {args.tz}")
+        w.set_place(name, lat, lon, tz or "", persist=False)
+    if args.time:
+        w.rate = 0
+        w._update_rate_ui()
+        w.view.set_time(parse_when(args.time, tzinfo(w.cfg.tz)))
+        w._update_time_widgets(force=True)
     if args.view:
         parts = [float(x) for x in args.view.split(",")]
         w.view.set_view(parts[0], parts[1], parts[2] if len(parts) > 2 else None)

@@ -159,8 +159,7 @@ def test_settings_roundtrip(app):
 
 
 def test_southern_hemisphere_and_poles(win):
-    win.cfg.lat, win.cfg.lon = -33.87, 151.21
-    win.view.set_config(win.cfg)
+    win.set_place("Sydney", -33.87, 151.21, "Australia/Sydney")
     win.search.setText("Canopus")
     win._do_search()
     QTest.qWait(600)
@@ -177,31 +176,70 @@ def test_splash_paints(app):
         assert not s.grab().isNull()
 
 
-def test_place_combo_switches_location(win):
-    c = win.place_combo
-    i = c.findText("Tokyo")
-    assert i >= 0
-    c.setCurrentIndex(i)
-    c.activated.emit(i)
-    assert win.cfg.place == "Tokyo" and win.cfg.lat == pytest.approx(35.68)
-    assert win.place_combo.currentText() == "Tokyo" and "35.68°N" in win.place_label.text()
-    assert Config().load(win.qs).place == "Tokyo"
+def _type_place(win, text):
+    win.place_edit.setText(text)
+    win._place_typed(text)
+
+
+def test_place_search_autocomplete_and_timezone(win):
+    _type_place(win, "tokyo")
+    labels = win.place_model.stringList()
+    assert labels and labels[0].startswith("Tokyo")
+    win._place_picked(labels[0])
+    assert win.cfg.place == "Tokyo" and win.cfg.tz == "Asia/Tokyo" and win.cfg.lat == pytest.approx(35.68)
+    assert win.place_edit.text() == "Tokyo" and "35.68°N" in win.place_label.text()
+    assert Config().load(win.qs).tz == "Asia/Tokyo"
+    # 2026-11-13 21:00 UTC = 14/11 06:00 in Tokyo (UTC+9)
+    assert win.dt_edit.dateTime().toString("dd/MM/yyyy HH:mm") == "14/11/2026 06:00"
+    assert "Asia/Tokyo" in win.utc_label.text() and "UTC+9" in win.utc_label.text()
     win.view.grab()
 
 
-def test_custom_place_saved_and_listed(win, monkeypatch):
-    from stardeck import mainwindow
+def test_search_finds_small_town_from_gazetteer(win):
+    _type_place(win, "vibo val")
+    assert win.place_model.stringList()[0].startswith("Vibo Valentia")
+    win._place_picked(win.place_model.stringList()[0])
+    assert win.cfg.tz == "Europe/Rome"
+
+
+def test_editing_clock_uses_place_timezone(win):
+    win.set_place("Sydney", -33.87, 151.21, "Australia/Sydney")
+    assert win.cfg.tz == "Australia/Sydney"
+    win.rate = 0
+    import calendar
+    from datetime import timedelta
+    from PySide6.QtCore import QDateTime, QTimeZone
+    wall = calendar.timegm((2026, 12, 24, 22, 30, 0))
+    win.dt_edit.setDateTime(QDateTime.fromSecsSinceEpoch(wall, QTimeZone.UTC))   # the edit holds the place's wall time as if it were UTC
+    # Sydney is UTC+11 in December (DST): 22:30 local = 11:30 UTC
+    u = astro.datetime_from_jd(win.view.jd) + timedelta(seconds=0.5)
+    assert (u.month, u.day, u.hour, u.minute) == (12, 24, 11, 30)
+
+
+def test_custom_place_saved_with_timezone(win, monkeypatch):
     from stardeck.settings_dialog import LocationDialog
     monkeypatch.setattr(LocationDialog, "exec", lambda self: 1)
-    monkeypatch.setattr(LocationDialog, "result_place", lambda self: ("Il mio giardino", 39.5, 16.1))
-    c = win.place_combo
-    c.setCurrentIndex(c.count() - 1)                       # "Altro luogo…"
-    c.activated.emit(c.count() - 1)
-    assert win.cfg.place == "Il mio giardino" and win.cfg.lat == pytest.approx(39.5)
-    assert c.itemText(0) == "★ Il mio giardino" and c.currentIndex() == 0
-    assert mainwindow.parse_custom(win.cfg.custom_places) == [("Il mio giardino", 39.5, 16.1)]
+    monkeypatch.setattr(LocationDialog, "result_place", lambda self: ("Il mio giardino", 39.5, 16.1, "Europe/Rome"))
+    win._other_place()
+    assert win.cfg.place == "Il mio giardino" and win.cfg.tz == "Europe/Rome"
+    saved = win._saved_places()
+    assert saved[0].name == "Il mio giardino" and saved[0].tz == "Europe/Rome" and saved[0].mine
+    _type_place(win, "giardino")
+    assert win.place_model.stringList()[0].startswith("★ Il mio giardino")
+
+
+def test_guess_timezone_and_gazetteer():
+    from stardeck.places import db, tzinfo, valid_tz
+    d = db()
+    assert d.guess_tz(41.9, 12.5) == "Europe/Rome" and d.guess_tz(-33.9, 151.2) == "Australia/Sydney"
+    assert d.guess_tz(0.0, -150.0) == "Etc/GMT+10"                 # open ocean: from the longitude
+    assert d.guess_tz(19.82, -155.47, "Mauna Kea (Hawaii)") == "Pacific/Honolulu"
+    assert tzinfo("") is None and tzinfo("Nope/Nope") is None and valid_tz("Europe/Rome")
+    assert [p.name for p in d.search("napoli", __import__("stardeck.places", fromlist=["x"]).preset_places())][0] == "Napoli"
+    assert d.search("x") == []
 
 
 def test_parse_custom_ignores_garbage():
     from stardeck.places import parse_custom
-    assert parse_custom("a|1|2;bad;x|abc|2;y|95|0;|1|1;ok|-33.9|151.2") == [("a", 1.0, 2.0), ("ok", -33.9, 151.2)]
+    got = parse_custom("a|1|2;bad;x|abc|2;y|95|0;|1|1;ok|-33.9|151.2|Australia/Sydney")
+    assert [(p.name, p.lat, p.lon, p.tz) for p in got] == [("a", 1.0, 2.0, ""), ("ok", -33.9, 151.2, "Australia/Sydney")]

@@ -9,7 +9,7 @@ description = "Virtual planetarium: stars, constellations, planets, Sun and Moon
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["PySide6-Essentials>=6.5"]
+dependencies = ["PySide6-Essentials>=6.5", "tzdata"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
@@ -21,7 +21,7 @@ stardeck = "stardeck.__main__:main"
 packages = ["stardeck"]
 
 [tool.setuptools.package-data]
-stardeck = ["stardeck.svg", "data/sky.json.gz"]
+stardeck = ["stardeck.svg", "data/sky.json.gz", "data/cities.json.gz"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

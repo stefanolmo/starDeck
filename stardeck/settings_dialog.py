@@ -1,12 +1,14 @@
 """Settings dialog: observing location and display options."""
 from __future__ import annotations
 
+import zoneinfo
+
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QSlider, QVBoxLayout)
 
 from .config import Config
-from .places import PLACES
+from .places import PLACES, db, valid_tz
 
 
 class SettingsDialog(QDialog):
@@ -64,7 +66,10 @@ class SettingsDialog(QDialog):
         if not name:
             self.err.setText("Dai un nome al luogo.")
             return
-        self.cfg.place, self.cfg.lat, self.cfg.lon = name, self.lat.value(), self.lon.value()
+        lat, lon = self.lat.value(), self.lon.value()
+        if (name, lat, lon) != (self.cfg.place, self.cfg.lat, self.cfg.lon) or not self.cfg.tz:
+            self.cfg.tz = db().guess_tz(lat, lon, name)
+        self.cfg.place, self.cfg.lat, self.cfg.lon = name, lat, lon
         self.cfg.star_scale = self.scale.value() / 100.0
         self.cfg.show_splash = self.splash.isChecked()
         self.accept()
@@ -73,7 +78,7 @@ class SettingsDialog(QDialog):
 class LocationDialog(QDialog):
     """Pick any place on Earth: name + coordinates (decimal degrees), optionally saved in the place list."""
 
-    def __init__(self, name: str = "", lat: float = 0.0, lon: float = 0.0, parent=None):
+    def __init__(self, name: str = "", lat: float = 0.0, lon: float = 0.0, tz: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Altro luogo")
         self.setMinimumWidth(380)
@@ -88,6 +93,13 @@ class LocationDialog(QDialog):
         form.addRow("Nome", self.name)
         form.addRow("Latitudine", self.lat)
         form.addRow("Longitudine", self.lon)
+        self.tz = QLineEdit(tz)
+        self.tz.setPlaceholderText("Europe/Rome — vuoto = automatico dalle coordinate")
+        comp = QCompleter(sorted(zoneinfo.available_timezones()), self.tz)
+        comp.setCaseSensitivity(Qt.CaseInsensitive)
+        comp.setFilterMode(Qt.MatchContains)
+        self.tz.setCompleter(comp)
+        form.addRow("Fuso orario", self.tz)
         lay.addLayout(form)
         self.save = QCheckBox("Salva nell'elenco dei luoghi")
         self.save.setChecked(True)
@@ -109,7 +121,11 @@ class LocationDialog(QDialog):
         if not self.name.text().strip():
             self.err.setText("Dai un nome al luogo.")
             return
+        if self.tz.text().strip() and not valid_tz(self.tz.text().strip()):
+            self.err.setText("Fuso orario sconosciuto (formato Continente/Città, es. Europe/Rome).")
+            return
         self.accept()
 
     def result_place(self) -> tuple:
-        return self.name.text().strip(), self.lat.value(), self.lon.value()
+        lat, lon, name = self.lat.value(), self.lon.value(), self.name.text().strip()
+        return name, lat, lon, self.tz.text().strip() or db().guess_tz(lat, lon, name)

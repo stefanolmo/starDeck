@@ -1,18 +1,19 @@
 """Main window: sky view, time controls, object info and layer toggles."""
 from __future__ import annotations
 
-from datetime import datetime
+import calendar
+from datetime import datetime, timezone
 from typing import Optional
 
-from PySide6.QtCore import QDateTime, QElapsedTimer, QSettings, Qt, QTimer
+from PySide6.QtCore import QDateTime, QElapsedTimer, QSettings, QStringListModel, Qt, QTimer, QTimeZone
 from PySide6.QtGui import QAction, QKeySequence, QTextDocument
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QDateTimeEdit, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+from PySide6.QtWidgets import (QCheckBox, QCompleter, QDateTimeEdit, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu,
                                QPushButton, QScrollArea, QSizePolicy, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from . import astro, theme
 from .catalog import Catalog, GREEK
 from .config import APP, ORG, Config
-from .places import PLACES, format_custom, parse_custom
+from .places import Place, db as places_db, format_custom, parse_custom, preset_places, tzinfo, valid_tz
 from .settings_dialog import LocationDialog, SettingsDialog
 from .skyview import Picked, SkyView
 from .widgets import Card
@@ -44,6 +45,9 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self.qs = qs or QSettings(ORG, APP)
         self.cfg = Config().load(self.qs)
+        self.ephemeral = False
+        if not tzinfo(self.cfg.tz):
+            self.cfg.tz = places_db().guess_tz(self.cfg.lat, self.cfg.lon, self.cfg.place)
         self.cat = catalog or Catalog()
         self.rate = 1 if jd is None else 0
         self._rate_before_pause = 1
@@ -69,12 +73,29 @@ class MainWindow(QMainWindow):
                        f"<span style='font-size:17px;font-weight:800;color:{theme.ACCENT}'>Deck</span>")
         title.setContentsMargins(4, 0, 14, 0)
         tb.addWidget(title)
-        self.place_combo = QComboBox()
-        self.place_combo.setMinimumWidth(240)
-        self.place_combo.setMaxVisibleItems(24)
-        self.place_combo.setToolTip("Luogo di osservazione")
-        self.place_combo.activated.connect(self._place_chosen)
-        tb.addWidget(self.place_combo)
+        self.place_edit = QLineEdit()
+        self.place_edit.setMinimumWidth(250)
+        self.place_edit.setPlaceholderText("Luogo: scrivi una città…")
+        self.place_edit.setToolTip("Luogo di osservazione: scrivi il nome di una città (34.000 in archivio), Invio per scegliere")
+        self.place_edit.addAction(theme.icon("pin", theme.MUTED), QLineEdit.LeadingPosition)
+        self.place_edit.textEdited.connect(self._place_typed)
+        self.place_edit.returnPressed.connect(self._place_enter)
+        self.place_model = QStringListModel(self)
+        self.place_completer = QCompleter(self.place_model, self)
+        self.place_completer.setCompletionMode(QCompleter.UnfilteredPopupCompletion)   # the list is already filtered by PlaceDB
+        self.place_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.place_completer.setMaxVisibleItems(12)
+        self.place_completer.activated[str].connect(self._place_picked)
+        self.place_edit.setCompleter(self.place_completer)
+        self._place_results: dict[str, Place] = {}
+        tb.addWidget(self.place_edit)
+        self.place_btn = QToolButton()
+        self.place_btn.setText("▾")
+        self.place_btn.setToolTip("Luoghi salvati e predefiniti")
+        self.place_btn.setPopupMode(QToolButton.InstantPopup)
+        self.place_menu = QMenu(self)
+        self.place_btn.setMenu(self.place_menu)
+        tb.addWidget(self.place_btn)
         self.place_label = QLabel()
         self.place_label.setObjectName("kv")
         self.place_label.setContentsMargins(10, 0, 0, 0)
@@ -115,6 +136,7 @@ class MainWindow(QMainWindow):
         self.dt_edit = QDateTimeEdit()
         self.dt_edit.setDisplayFormat("dd/MM/yyyy  HH:mm:ss")
         self.dt_edit.setCalendarPopup(True)
+        self.dt_edit.setTimeZone(QTimeZone.UTC)
         self.dt_edit.setMinimumWidth(190)
         self.dt_edit.dateTimeChanged.connect(self._dt_edited)
         tt.addWidget(self.dt_edit)
@@ -216,52 +238,88 @@ class MainWindow(QMainWindow):
         comp.activated.connect(lambda _t: self._do_search())
         self.search.setCompleter(comp)
 
-    def _all_places(self) -> list:
-        return [(n, la, lo, True) for n, la, lo in parse_custom(self.cfg.custom_places)] + [(n, la, lo, False) for n, la, lo in PLACES]
+    # ------------------------------------------------------------------ place
+    def _saved_places(self) -> list:
+        return parse_custom(self.cfg.custom_places)
 
     def _update_place_label(self) -> None:
-        """Rebuilds the place list (saved places first) and shows the current one."""
-        c = self.place_combo
-        c.blockSignals(True)
-        c.clear()
-        places = self._all_places()
-        cur = -1
-        for n, la, lo, mine in places:
-            c.addItem(("★ " if mine else "") + n, (n, la, lo))
-            if cur < 0 and n == self.cfg.place and abs(la - self.cfg.lat) < 0.01 and abs(lo - self.cfg.lon) < 0.01:
-                cur = c.count() - 1
-        if cur < 0:                                   # current place not in the list (command line, old settings)
-            c.insertItem(0, self.cfg.place, (self.cfg.place, self.cfg.lat, self.cfg.lon))
-            cur = 0
-        c.addItem("Altro luogo…", None)
-        c.setCurrentIndex(cur)
-        c.blockSignals(False)
+        """Shows the current place and rebuilds the menu of saved / preset places."""
+        self.place_edit.setText(self.cfg.place)
+        self.place_edit.setCursorPosition(0)
+        self.place_edit.clearFocus()
         ns = "N" if self.cfg.lat >= 0 else "S"
         ew = "E" if self.cfg.lon >= 0 else "O"
         self.place_label.setText(f"{abs(self.cfg.lat):.2f}°{ns}  {abs(self.cfg.lon):.2f}°{ew}")
+        m = self.place_menu
+        m.clear()
+        saved = self._saved_places()
+        for p in saved:
+            m.addAction("★ " + p.name, lambda _c=False, p=p: self._apply_place(p))
+        if saved:
+            m.addSeparator()
+        for p in preset_places():
+            m.addAction(p.name, lambda _c=False, p=p: self._apply_place(p))
+        m.addSeparator()
+        m.addAction("Altro luogo (coordinate)…", self._other_place)
 
-    def _place_chosen(self, _i: int) -> None:
-        d = self.place_combo.currentData()
-        if d is None:
-            dlg = LocationDialog(self.cfg.place, self.cfg.lat, self.cfg.lon, self)
-            if dlg.exec():
-                name, lat, lon = dlg.result_place()
-                if dlg.save.isChecked():
-                    mine = [p for p in parse_custom(self.cfg.custom_places) if p[0] != name]
-                    self.cfg.custom_places = format_custom([(name, lat, lon)] + mine)
-                self.set_place(name, lat, lon)
-            else:
-                self._update_place_label()
-            return
-        self.set_place(*d)
+    def _place_typed(self, text: str) -> None:
+        res = places_db().search(text, self._saved_places() + preset_places())
+        labels, seen = [], {}
+        for p in res:
+            seen[p.label] = seen.get(p.label, 0) + 1
+        self._place_results = {}
+        for p in res:
+            lab = p.label if seen[p.label] == 1 else f"{p.label} ({abs(p.lat):.1f}°{'N' if p.lat >= 0 else 'S'} {abs(p.lon):.1f}°{'E' if p.lon >= 0 else 'O'})"
+            if p.mine:
+                lab = "★ " + lab
+            labels.append(lab)
+            self._place_results[lab] = p
+        self.place_model.setStringList(labels)
+        if labels:
+            self.place_completer.complete()
 
-    def set_place(self, name: str, lat: float, lon: float) -> None:
+    def _place_picked(self, label: str) -> None:
+        p = self._place_results.get(label)
+        if p is not None:
+            self._apply_place(p)
+
+    def _place_enter(self) -> None:
+        popup = self.place_completer.popup()
+        if popup is not None and popup.isVisible() and popup.currentIndex().isValid():
+            return                                       # the completer handles it
+        res = places_db().search(self.place_edit.text(), self._saved_places() + preset_places(), 1)
+        if res:
+            self._apply_place(res[0])
+        else:
+            self.status.setText(f"Nessun luogo trovato per «{self.place_edit.text()}» — usa ▾ → «Altro luogo»")
+
+    def _apply_place(self, p: Place) -> None:
+        tz = p.tz if p.tz and valid_tz(p.tz) else places_db().guess_tz(p.lat, p.lon, p.name)
+        self.set_place(p.name, p.lat, p.lon, tz)
+
+    def _other_place(self) -> None:
+        dlg = LocationDialog(self.cfg.place, self.cfg.lat, self.cfg.lon, self.cfg.tz, self)
+        if dlg.exec():
+            name, lat, lon, tz = dlg.result_place()
+            if dlg.save.isChecked():
+                mine = [p for p in self._saved_places() if p.name != name]
+                self.cfg.custom_places = format_custom([Place(name, lat, lon, tz, mine=True)] + mine)
+            self.set_place(name, lat, lon, tz)
+        else:
+            self._update_place_label()
+
+    def set_place(self, name: str, lat: float, lon: float, tz: str = "", persist: bool = True) -> None:
+        """Changes the observing place. The instant stays the same; the clock is shown in the new place's time zone."""
         self.cfg.place, self.cfg.lat, self.cfg.lon = name, lat, lon
-        self.cfg.save(self.qs)
+        self.cfg.tz = tz if tz and valid_tz(tz) else places_db().guess_tz(lat, lon, name)
+        self.ephemeral = not persist                   # command-line place: do not overwrite the saved settings on exit
+        if persist:
+            self.cfg.save(self.qs)
         self.view.set_config(self.cfg)
         self._update_place_label()
         self._sky_txt = None
-        self.status.setText(f"Luogo: {name}")
+        self._update_time_widgets(force=True)
+        self.status.setText(f"Luogo: {name}  ·  fuso {self.cfg.tz}")
 
     # ------------------------------------------------------------------ time
     def _tick(self) -> None:
@@ -274,8 +332,13 @@ class MainWindow(QMainWindow):
             self._update_time_widgets()
         self._update_sky_card()
 
+    def _tz(self):
+        return tzinfo(self.cfg.tz)                    # None = system local time
+
     def _local_dt(self) -> datetime:
-        return astro.datetime_from_jd(self.view.jd).astimezone()
+        tz = self._tz()
+        d = astro.datetime_from_jd(self.view.jd)
+        return d.astimezone(tz) if tz is not None else d.astimezone()
 
     def _update_time_widgets(self, force: bool = False) -> None:
         d = self._local_dt()
@@ -284,13 +347,18 @@ class MainWindow(QMainWindow):
             return
         self._last_shown = key
         self.dt_edit.blockSignals(True)
-        self.dt_edit.setDateTime(QDateTime.fromSecsSinceEpoch(round(d.timestamp())))
+        # the edit shows the place's wall-clock time; it is stored as if it were UTC so that no system DST rule can alter it
+        wall = calendar.timegm(d.replace(tzinfo=None).timetuple())
+        self.dt_edit.setDateTime(QDateTime.fromSecsSinceEpoch(wall, QTimeZone.UTC))
         self.dt_edit.blockSignals(False)
         u = astro.datetime_from_jd(self.view.jd)
-        self.utc_label.setText(f"UTC {u:%H:%M:%S}  ·  JD {self.view.jd:.4f}  ·  {d:%Z}")
+        off = d.utcoffset().total_seconds() / 3600.0 if d.utcoffset() is not None else 0.0
+        self.utc_label.setText(f"{self.cfg.tz or 'ora di sistema'} {d:%Z} (UTC{off:+g})  ·  UTC {u:%H:%M:%S}  ·  JD {self.view.jd:.4f}")
 
     def _dt_edited(self, qdt: QDateTime) -> None:
-        self.view.set_time(qdt.toSecsSinceEpoch() / 86400.0 + 2440587.5)
+        wall = datetime.fromtimestamp(qdt.toSecsSinceEpoch(), timezone.utc).replace(tzinfo=None)
+        tz = self._tz()
+        self.view.set_time(astro.jd_from_datetime(wall.replace(tzinfo=tz) if tz is not None else wall))   # naive = system local time
         self._last_shown = None
         if self.rate == 1:
             self.rate = 0
@@ -468,6 +536,7 @@ class MainWindow(QMainWindow):
             self.cfg.save(self.qs)
             self.view.set_config(self.cfg)
             self._update_place_label()
+            self._update_time_widgets(force=True)
 
     def showEvent(self, ev) -> None:
         super().showEvent(ev)
@@ -476,5 +545,6 @@ class MainWindow(QMainWindow):
         self._update_sky_card()
 
     def closeEvent(self, ev) -> None:
-        self.cfg.save(self.qs)
+        if not self.ephemeral:
+            self.cfg.save(self.qs)
         super().closeEvent(ev)

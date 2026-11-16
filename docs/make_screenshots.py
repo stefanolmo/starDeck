@@ -25,8 +25,7 @@ def main():
     qs.clear()
     jd = astro.jd_from_datetime(datetime(2026, 11, 13, 21, 0, tzinfo=timezone.utc))
     w = MainWindow(qs=qs, jd=jd)
-    w.cfg.place, w.cfg.lat, w.cfg.lon = "Roma", 41.9, 12.5
-    w._update_place_label()
+    w.set_place("Roma", 41.9, 12.5, "Europe/Rome")
     w.resize(1280, 800)
     w.show()
     w.view.set_view(160.0, 38.0, 100.0)

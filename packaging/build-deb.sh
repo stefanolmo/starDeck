@@ -53,7 +53,7 @@ Version: $VERSION
 Section: science
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.10), python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets
+Depends: python3 (>= 3.10), python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets, tzdata
 Recommends: libxcb-cursor0, libxkbcommon-x11-0
 Maintainer: $MAINT
 Installed-Size: $(du -sk "$STAGE" | cut -f1)
